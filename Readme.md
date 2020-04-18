@@ -14,7 +14,7 @@ was exposed to wide varity of data science modules. The modules I enjoyed the mo
 
 ## Deep Learning
 
-Classifical statistical methods of modeling and predicting are sometimes not useful in many data science applications. Areas we observe non-linear relationships between explanatory variables and response variables are the most notable. Eg: Image Classification, Text anaytics etc
+Classical statistical methods of modeling and predicting are sometimes not useful in many data science applications. Areas we observe non-linear relationships between explanatory variables and response variables are the most notable. Eg: Image Classification, Text anaytics etc
 
 An example of usign advanced deep learning techniques to derice value from unstructed text data is sentiment analysis. Long Short-Term memory neural networks work very well as [demonstrated here] (./Deep%20Learning/IMDBMovieReviewClassification.ipynb)
 

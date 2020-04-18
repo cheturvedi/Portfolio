@@ -1,0 +1,436 @@
+---
+title: "Word Association Networks"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    highlight: pygments
+  word_document:
+    toc: yes
+header-includes: \usepackage{float} \floatplacement{figure}{H} \floatplacement{table}{H}
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(igraph)
+library(ggraph)
+library(readr)
+library(kableExtra)
+```
+
+# Introduction
+
+This report aims to publish the results of my experiments in building   Word Association networks for 3 cue words - SERVER, CABLE, SAVIOUR. A word association dataset for English words released by University of South Florida is utilized to build topic networks from words in the vicinity of chosen cue words. Authority measures on the topic network reveal heavily associated words. Community detection reveals which set of words are often closely associated with each other in different contexts
+
+# Part 1
+
+## Data Preparation
+
+The PAJEK format file was used to create a graph. This network is assumed to be undirected. Later,
+
+- The cue words were located from the text file
+- Each node in the graph is give  a boolean attribute where True indicates that it was a cue word
+
+## Building Topic Networks - Sampling Strategy
+
+As observed in the section titled 'Part 1' in Appendix, random walks are utilized to build topic networks. The sampling strategy is 
+
+- From the Target word , record all the vertices on a random walk of length 3 for 500 times
+- For each random walk, construct the edge list by pairing up consecutive vertices
+- Combine all the edges into one giant edge list
+- Create an undirected graph from this edge list 
+
+This is the neighborhood of words for each target word
+
+```{r}
+
+#### Part 1 ####
+
+# Load network file
+g<- read_graph(file="PairsFSG.net",format="pajek")
+
+# simplify the graph
+g<- as.undirected(g)
+g<-simplify(g)
+
+#load in data about cue words
+cue <- read_lines('cue.txt')[-seq(1,4)]
+cue <- ifelse(cue == "1",T,F)
+
+# Mark which of the words in the graph are cue words
+V(g)$cue = cue
+
+```
+
+
+
+```{r eval=F}
+
+# Choosing target words 
+#   - randomly sample 10 cue words
+#   - For each word build topic network, find communities in it
+#   - Print details of those words who have 6-9 communities
+random_targets <- V(g)$name[sample(which(V(g)$cue == T),10)]
+
+for (word in random_targets){
+    
+    net <- make_topic_network(g,word)
+    net.comm <- cluster_walktrap(net)
+    cat(word,"\t",max(net.comm$membership),"\n")
+    
+    if (max(net.comm$membership) %in% seq(6,9)){
+        print(get_community_nodes(net.comm))
+    }
+    
+    
+}
+
+```
+
+```{r}
+
+target_words = c("SERVER","CABLE","SAVIOUR")
+
+make_topic_network <- function(graph, start_node) {
+        
+        # all the vertices on the walk
+        walk_vids <-
+                lapply(
+                        rep(3, 500),
+                        random_walk,
+                        graph = g,
+                        start = start_node,
+                        stuck = "return"
+                )
+        
+        # create edges by pairing adjacent vertices
+        walk_edge_list <-
+                lapply(walk_vids, function(v) {
+                        named_v <-
+                                names(v)
+                        c(named_v[1], named_v[2], named_v[2], named_v[3])
+                })
+        
+        #created an undirected graph from the edge list
+        topic_network <- make_undirected_graph(unlist(walk_edge_list))
+        
+        topic_network
+}
+
+
+
+get_community_nodes <- function(comm){
+
+num_comm <- max(comm$membership)
+
+sapply(seq(1,num_comm),function (v) {comm$names[which(comm$membership == v)]}) 
+}
+
+#### Part 1 END ####
+
+set.seed(16)
+word1_topic_net <- make_topic_network(g,"SERVER")
+word2_topic_net <- make_topic_network(g,"CABLE")
+word3_topic_net <- make_topic_network(g,"SAVIOR")
+
+```
+
+
+
+## Graph Authority measures
+
+The authority measures used are : **Normalized Degree Centrality, Eigen value Centrality & Vertex Betweeness**.  
+
+- The Degree centrality is normalized by maximum degree
+- Eigen centrailty measure is calculated by specifying that this graph is not a directed graph
+- Betweeness is also calculated by specifying that this graph is not a directed graph. This measure is also noramlized
+
+```{r}
+
+# Returns a 3 member list
+#     Member 1 -> Nodes with high degree centrality
+#     Member 2 -> Nodes with high eigen value centrality
+#     Member 3 -> Nodes with high vertex betweeness
+get_authority_nodes <- function(topic_net){
+    
+        result = list()
+        
+        degree_top3 <- sort(degree(topic_net), decreasing = TRUE)[1:4]
+        result$Degree <- degree_top3/max(degree(topic_net))
+        
+        eigen_ret <- eigen_centrality(topic_net, directed = F)
+        eigen_top3 <-  sort(eigen_ret$vector, decreasing = TRUE)[1:4]
+        result$Eigen <- eigen_top3
+        
+        degree_top10 <- sort(degree(topic_net), decreasing = TRUE)[1:10]
+        
+        betweeness <-
+                sort(betweenness(
+                        topic_net,
+                        directed = F,
+                        normalized = T
+                ),
+                decreasing = T)[1:4]
+        result$Betweeness <- betweeness
+        
+        result    
+}
+
+word1_authorities <- get_authority_nodes(word1_topic_net)
+word2_authorities <- get_authority_nodes(word2_topic_net)
+word3_authorities <- get_authority_nodes(word3_topic_net)
+
+```
+
+### SERVER 
+
+- The target word 'SERVER' has the highest degree
+- PLATE, HOST not only rank high in Degree centrality but also on Eigen value measure
+- FOOD, TENNIS are the words which have the highest betweeness scores
+- Servers are most often associated with carrying plates of food. Another common association is with tennis players who start a point
+
+```{r}
+
+measures <- c(rep("Degree",4),rep("Eigen value",4),rep("Betweeness",4))
+words <- c(
+  names(word1_authorities$Degree),
+  names(word1_authorities$Eigen),
+  names(word1_authorities$Betweeness)
+)
+values <- c(word1_authorities$Degree,word1_authorities$Eigen,word1_authorities$Betweeness)
+
+data.frame("Measures"= measures,"Words" = words,"Values" = values) %>%
+  kable(digits = 2,"latex",caption = "SERVER - Nodes with Top 3 Authority Measures",
+        booktabs = T) %>% 
+  kable_styling(latex_options = c("striped"))
+
+```
+
+
+### CABLE
+
+- The target word 'CABLE' has the highest degree
+- HBO not only ranks high in Degree centrality but also on Eigen value measure
+- CAR, TELEVISION are the words which have the highest betweeness scores
+- CABLE is most often associated with TV & TV shows production networks. Another common association is with Cars
+
+```{r}
+
+words <- c(
+  names(word2_authorities$Degree),
+  names(word2_authorities$Eigen),
+  names(word2_authorities$Betweeness)
+)
+values <- c(word2_authorities$Degree,word2_authorities$Eigen,word2_authorities$Betweeness)
+
+data.frame("Measures"= measures,"Words" = words,"Values" = values) %>%
+  kable(digits = 2,"latex",caption = "CABLE - Nodes with Top 3 Authority Measures",
+        booktabs = T) %>% 
+  kable_styling(latex_options = c("striped"))
+```
+
+
+### SAVIOUR
+
+- The target word 'SAVIOUR' has the highest degree
+- BIBLE not only ranks high in Degree centrality but also on Eigen value measure
+- FOOD, HELP are the words which have the highest betweeness scores
+- JESUS CHRIST is the most common association with SAVIOR, deeds of charity like providing food or medical help is also associated with this target word
+
+```{r}
+
+words <- c(
+  names(word3_authorities$Degree),
+  names(word3_authorities$Eigen),
+  names(word3_authorities$Betweeness)
+)
+values <- c(word3_authorities$Degree,word3_authorities$Eigen,word3_authorities$Betweeness)
+
+data.frame("Measures"= measures,"Words" = words,"Values" = values) %>%
+  kable(digits = 2,"latex",caption = "SAVIOR - Nodes with Top 3 Authority Measures",
+        booktabs = T) %>% 
+  kable_styling(latex_options = c("striped"))
+```
+
+
+# Part 2
+
+Figures 1,2,3 show the topic networks for our target words. It is apparent from these that all of our graphs have densely connected sub graphs. As as result I opted to use the walk trap algorithm which is specialized to find communities in this sort of networks
+
+## Community Detection Algorithm -  WalkTrap
+
+WalkTrap tries to find densely connected subgraphs, also called communities in a graph via random walks. The idea is that short random walks tend to stay in the same community.
+
+- The membership parameter is set to true. This forces the algorithm to calculate the membership for each vertex corresponding to the highest modularity value. This is later used for analysis.
+
+
+```{r}
+set.seed(400)
+
+# Community detection using walktrap 
+word1.comm<- cluster_walktrap(word1_topic_net,  membership = TRUE)
+
+word2.comm<- cluster_walktrap(word2_topic_net,  membership = TRUE)
+
+word3.comm <- cluster_walktrap(word3_topic_net,  membership = TRUE)
+
+```
+
+
+## Community Analysis 
+
+The community detection algorithm allows us to uncover the different contexts in which the same cue word is utilized. An interpretation of the various detected communities is tabulated here. The various contexts uncovered for our target words are as follows
+
+```{r eval=T}
+
+all_words <- get_community_nodes(word1.comm)
+
+comm_nodes<- sapply(all_words,function(l) {
+    unlist(l)
+    paste(l,collapse=' ') 
+    })
+
+comm_num <- seq(1,length(all_words))
+comm_size <- sapply(all_words,length)
+
+contexts <- c(
+  "A person whose job is to serve food to customers",
+  "Utensil used to serve food",
+  "A tennis player who serves to start the point",
+  "Places you would see a waitor in",
+  "In-house helpers who work for a wealthy family",
+  "A person serving alcoholic beverages"
+)
+
+data.frame("Community" = comm_num,"Nodes" = comm_nodes,"Size" = comm_size,"Context"= contexts) %>%
+kable("latex",caption = "SERVER - Communities",
+        booktabs = T) %>% 
+  kable_styling(latex_options = c("striped")) %>%
+    column_spec(2, width = "20em") %>%
+    column_spec(4, width = "20em")
+
+```
+
+```{r eval=T}
+
+all_words <- get_community_nodes(word2.comm)
+
+comm_nodes<- sapply(all_words,function(l) {
+    unlist(l)
+    paste(l,collapse=' ') 
+    })
+
+comm_num <- seq(1,length(all_words))
+comm_size <- sapply(all_words,length)
+
+contexts <- c(
+  "A conductor for transmitting electrical power",
+  "A wire used to fix car batteries",
+  "An organisation that produces TV shows",
+  "A thin object that can be looped or tied around",
+  "A square hollow box that can hold things",
+  "Recharging dead car batteries",
+  "A thin line that is used to measure length",
+  "Establish a link between two entities",
+  "A wire connecting Printers to office computers",
+  "A device that aids in digital communication"
+)
+
+data.frame("Community" = comm_num,"Nodes" = comm_nodes,"Size" = comm_size, "Context" = contexts) %>%
+kable(caption = "CABLE - Communities",
+        booktabs = T) %>% 
+  kable_styling(latex_options = c("striped")) %>%
+    column_spec(2, width = "25em") %>%
+    column_spec(4, width = "15em")
+
+```
+
+```{r eval=T}
+
+all_words <- get_community_nodes(word3.comm)
+
+comm_nodes<- sapply(all_words,function(l) {
+    unlist(l)
+    paste(l,collapse=' ') 
+    })
+
+comm_num <- seq(1,length(all_words))
+comm_size <- sapply(all_words,length)
+
+contexts = c(
+  "The Biblical saviour - Jesus, religous saviours",
+  "A person providing medical help",
+  "A person who provides food to the needy",
+  "Types of food one enjoys - associated to savor",
+  "words associated with savor by mistake",
+  "A person who saves people in distress",
+  "Remembering things fondly - associated to savor"
+  
+)
+
+data.frame("Community" = comm_num,"Nodes" = comm_nodes,"Size" = comm_size,"Context" = contexts) %>%
+kable(caption = "SAVIOUR - Communities",
+        booktabs = T) %>% 
+  kable_styling(latex_options = c("striped")) %>%
+    column_spec(2, width = "25em") %>%
+    column_spec(4, width = "15em")
+
+```
+
+\pagebreak
+
+# Graph Plots
+
+The following graphs are an effort in visualizing the topic networks built using random walks. The nodes are colored by the community to which they belong. 
+
+## Topic Network - SERVER
+
+```{r fig.cap="CABLE Topic Network",eval=T}
+
+
+ggraph(word1_topic_net,layout = "fr") +
+        geom_edge_link2(edge_width = 0.5,aes(edge_alpha = 0.1),show.legend = F) +
+        geom_node_point(color=as.factor(word1.comm$membership),size=2,alpha = 0.5) +
+        geom_node_text(aes(label=name),size=1.5) +
+        theme_void()
+```
+
+\pagebreak
+
+## Topic Network - CABLE
+
+```{r fig.cap="CABLE Topic Network",eval=T}
+
+ggraph(word2_topic_net,layout = "fr") +
+        geom_edge_link2(edge_width = 0.5,aes(edge_alpha = 0.1),show.legend = F) +
+        geom_node_point(color=as.factor(word2.comm$membership),size=2,alpha = 0.5) +
+        geom_node_text(aes(label=name),size=1.5) +
+        theme_void()
+```
+
+
+## Topic Network - SAVIOUR
+
+```{r fig.cap="SAVIOUR Topic Network",eval=T}
+
+ggraph(word3_topic_net,layout = "fr") +
+        geom_edge_link2(edge_width = 0.5,aes(edge_alpha = 0.1),show.legend = F) +
+        geom_node_point(color=as.factor(word3.comm$membership),size=2,alpha = 0.5) +
+        geom_node_text(aes(label=name),size=1.5) +
+        theme_void() 
+        
+```
+
+
+# Conclusion
+
+Using the given dataset, random walk sampling method was used to create topic networks for a few target words. These networks were then used to find communities by using the walktrap algorithm. The resulting communities were interpreted to reveal the different contexts the chosen target words are commonly found in.
+
+\pagebreak
+
+# Appendix
+``` {r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+
+```
